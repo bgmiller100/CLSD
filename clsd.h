@@ -357,36 +357,19 @@ double * lsd_scale(int * n_out, double * img, int X, int Y, double * inputv);
  */
 double * lsd(int * n_out, double * img, int X, int Y,double * inputv);
 
-
 /*----------------------------------------------------------------------------*/
 
-double * LineSegmentDetection_I0( int * n_out,
+double * Conditional_LineSegmentDetection( int * n_out,
                                double * img, int X, int Y,
                                double * img0, int X0, int Y0,
                                double ang_th, double log_eps, double density_th,
                                int n_bins,
                                int ** reg_img, int * reg_x, int * reg_y ,double * inputv);
-double * lsd_scale_region_I0( int * n_out,
+double * c_lsd_scale_region( int * n_out,
                            double * img, int X, int Y,double * img0, int X0, int Y0,
                            int ** reg_img, int * reg_x, int * reg_y ,double * inputv);
-double * lsd_scale_I0(int * n_out, double * img, int X, int Y,
+double * c_lsd_scale(int * n_out, double * img, int X, int Y,
 					  double * img0, int X0, int Y0,double * inputv);
-double * lsd_I0(int * n_out, double * img, int X, int Y,
-				double * img0, int X0, int Y0,double * inputv);
-
-/*----------------------------------------------------------------------------*/
-
-double * LineSegmentDetection_I00( int * n_out,
-                               double * img, int X, int Y,
-                               double * img0, int X0, int Y0,
-                               double ang_th, double log_eps, double density_th,
-                               int n_bins,
-                               int ** reg_img, int * reg_x, int * reg_y ,double * inputv);
-double * lsd_scale_region_I00( int * n_out,
-                           double * img, int X, int Y,double * img0, int X0, int Y0,
-                           int ** reg_img, int * reg_x, int * reg_y ,double * inputv);
-double * lsd_scale_I00(int * n_out, double * img, int X, int Y,
-					  double * img0, int X0, int Y0,double * inputv);
-double * lsd_I00(int * n_out, double * img, int X, int Y,
+double * c_lsd(int * n_out, double * img, int X, int Y,
 				double * img0, int X0, int Y0,double * inputv);
 #endif /* !LSD_HEADER */
