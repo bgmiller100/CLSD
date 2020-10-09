@@ -1,4 +1,4 @@
-# CLSD
+## CLSD
 Conditional Line Segment Detection on an observation image with regards to a noise model, assuming non-independent orientations in the null hypothesis
 
 version 1.1 
@@ -6,7 +6,7 @@ October 9, 2020
 Benjamin Miller
 benjamin.g.miller@utexas.edu
 
-#Requirements:
+# Requirements:
 Python 3.7.6
 MIR [1] : https://web.mit.edu/qiqi/www/mir/
 GSL: https://www.gnu.org/software/gsl/
@@ -15,11 +15,11 @@ To compile, run 'bash setup.sh'.
 
 --
 
-#NOTICE:
+# NOTICE:
 This program is modified from the source code of LSDSAR: [2]
 Date of Modification: October 8, 2020.
 
-#NOTICE: 
+# NOTICE: 
 This program is modified from the source code of LSD: [3]
 Date of Modification: 27/06/2018.
 
