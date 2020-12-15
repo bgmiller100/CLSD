@@ -359,7 +359,39 @@ double * lsd(int * n_out, double * img, int X, int Y,double * inputv);
 
 /*----------------------------------------------------------------------------*/
 
-double * Conditional_LineSegmentDetection( int * n_out,
+double * LineSegmentDetection3( int * n_out,
+                               double * img, int X, int Y, int Z,
+                               double ang_th, double log_eps, double density_th,int n_bins,
+                               int ** reg_img, int * reg_x, int * reg_y, int * reg_z, double * inputv);
+double * lsd3_scale_region( int * n_out, double * img, int X, int Y, int Z, 
+		int ** reg_img, int * reg_x, int * reg_y, int * reg_z,double * inputv);
+double * lsd3_scale(int * n_out, double * img, int X, int Y, int Z, double * inputv);
+double * lsd3(int * n_out, double * img, int X, int Y, int Z, double * inputv);
+
+
+/*----------------------------------------------------------------------------*/
+
+double * CLSD3_Pipeline( int * n_out,
+                               double * img, int X, int Y, int Z,
+                               double * img0, int X0, int Y0, int Z0,
+                               double ang_th, double log_eps, double density_th,
+                               int n_bins,
+                               int ** reg_img, int * reg_x, int * reg_y , int * reg_z,
+			       double * inputv);
+double * c_lsd3_scale_region( int * n_out,
+                           double * img, int X, int Y, int Z,
+			   double * img0, int X0, int Y0, int Z0,
+                           int ** reg_img, int * reg_x, int * reg_y ,int * reg_z,
+			   double * inputv);
+double * c_lsd3_scale(int * n_out, double * img, int X, int Y, int Z,
+					  double * img0, int X0, int Y0, int Z0,
+					  double * inputv);
+double * c_lsd3(int * n_out, double * img, int X, int Y, int Z,
+				double * img0, int X0, int Y0, int Z0, double * inputv);
+
+/*----------------------------------------------------------------------------*/
+
+double * CLSD_Pipeline( int * n_out,
                                double * img, int X, int Y,
                                double * img0, int X0, int Y0,
                                double ang_th, double log_eps, double density_th,
