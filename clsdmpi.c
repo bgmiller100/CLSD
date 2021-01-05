@@ -187,17 +187,21 @@ Email: chenguangl@whu.edu.cn (permanent)
 **  ----------------------------------------------------------------------------*/
 
 //Headers for LSD
+//#define _GNU_SOURCE
 #include <Python.h>
 #include <stdio.h>
+#include <omp.h>
 #include <stdlib.h>
 #include <math.h>
 #include <limits.h>
 #include <float.h>
 #include<string.h>
+#include <time.h>
 #include<gsl/gsl_eigen.h>
 #include<gsl/gsl_randist.h>
 #include<gsl/gsl_rng.h>
 #include<gsl/gsl_qrng.h>
+#include<gsl/gsl_sf_trig.h>
 #include<mir/mir.h>
 #include<sys/mman.h>
 #include "clsd.h"
@@ -413,7 +417,7 @@ static void free_angles3(angles3 i)
 static angles3 line_angle3(double x1, double y1, double z1, 
         double x2, double y2, double z2)
 {
-    double az =  line_angle(x1,y1,x2,y2);
+    double az =  atan2( y2-y1 , x2-x1) ;
     double el =  acos((z2-z1)/dist3(x1,y1,z1,x2,y2,z2));
     angles3 azel=new_angles3(az,el);
     //azel->az = az;
@@ -1601,6 +1605,33 @@ static void free_grads(grads i)
 }
 
 
+/*----------------------------------------------------------------------------*/
+/** Computes the direction of the GRADIENT VECTOR of 'in' at each point.
+ * Since the 'Level Line' is an ambiguous 2D surface in 3D.
+ * The GR algorithm is identical to 2D, but we switch the atan expression 
+ * to use the normal and not tangential direction
+ * This correction hence mandates the following changes:
+ *
+ * get_theta3: keeps min eigenvalue for principal axis
+ * 	*note: called by region2rect3 to assemble rectangle
+ * region3_grow: keeps parallel alignment of neighbors prior to knowing rectangle 
+ * rect3_nfa:  orthogonality alignment check INSTEAD of parallel
+ * make_markov3: Orthogonality to horiz/vert/depth lines
+
+    The result is:
+    - an image_double with the angle at each pixel, or NOTDEF if not defined.
+    - the image_double 'modgrad' (a pointer is passed as argument)
+      with the gradient magnitude at each point.
+    - a list of pixels 'list_p' roughly ordered by decreasing
+      gradient magnitude. (The order is made by classifying points
+      into bins by gradient magnitude. The parameters 'n_bins' and
+      'max_grad' specify the number of bins and the gradient modulus
+      at the highest bin. The pixels in the list would be in
+      decreasing gradient magnitude, up to a precision of the size of
+      the bins.)
+    - a pointer 'mem_p' to the memory used by 'list_p' to be able to
+      free the memory when it is not used anymore.
+ */
 static grads ll_angle3( image3_double in,
                               struct coorlist3 ** list_p, void ** mem_p,
                               image3_double * modgrad, 
@@ -1687,7 +1718,7 @@ int longueur=ceil(log(10)*beta);
 int largeur=longueur;
 
 double Mg, Md, coeff;
-float Mgx,Mdx,Mgy,Mdy,Mgz,Mdz;
+double Mgx,Mdx,Mgy,Mdy,Mgz,Mdz;
 int h,xx,yy,zz,hx,hy,hz;
 //Loop2: compute m terms
 printf("Get gradx,y,z\n");fflush(stdout);
@@ -1716,9 +1747,14 @@ for(i=0;i<imgSize;i++)
 
 }
 
-printf("DATA SUCCESSFULLY STORED \n");fflush(stdout);
+//printf("DATA SUCCESSFULLY STORED \n");fflush(stdout);
 
-printf("Loop 1.... \n");fflush(stdout);
+//printf("Loop 1.... \n");fflush(stdout);
+double startT,endT;
+startT=omp_get_wtime();
+#pragma omp parallel default(none) shared(X,Y,Z,largeur,beta,img1,gradx1,grady1,gradz1) private(i,j,k,h,xx,yy,zz,coeff,Mdx,Mdy,Mdz)   
+{
+#pragma omp for 
 for(k=0;k<Z;k++){
     //if((k%10)==0) {printf("(%d/%d)...",k,Z);fflush(stdout);}
     for(j=0;j<Y;j++) {
@@ -1729,9 +1765,7 @@ for(k=0;k<Z;k++){
         //sum over the latter letter in order to get azimuth from x,y
         //For z, difference is verticle to get elevation 
         /*GRADX*/       
-        Mdx=0.; Mgx=0.;
-        Mdy=0.; Mgy=0.;
-        Mdz=0.; Mgz=0.;
+        Mdx=0.;  Mdy=0.;  Mdz=0.; 
         for(h=-largeur;h<=largeur;h++)
         {     
             xx = (i+h)>0?(i+h):0;
@@ -1751,8 +1785,16 @@ for(k=0;k<Z;k++){
         }
     }
 }
+}
+endT=omp_get_wtime();
+//printf("Parallel: %f seconds\n",endT-startT);fflush(stdout);
 
-printf("Loop 2.... \n");fflush(stdout);
+//printf("Loop 2.... \n");fflush(stdout);
+startT = omp_get_wtime();
+
+#pragma omp parallel default(none) shared(X,Y,Z,largeur,beta,gradx1,grady1,gradz1,gradx2,grady2,gradz2) private(i,j,k,h,xx,yy,zz,coeff,Mdx,Mdy,Mdz)   
+{
+#pragma omp for 
 for(k=0;k<Z;k++){
     //if((k%10)==0) {printf("(%d/%d)...",k,Z);fflush(stdout);}
     for(j=0;j<Y;j++) {
@@ -1763,9 +1805,7 @@ for(k=0;k<Z;k++){
         //sum over the latter letter in order to get azimuth from x,y
         //For z, difference is verticle to get elevation 
         /*GRADX*/       
-        Mdx=0.; Mgx=0.;
-        Mdy=0.; Mgy=0.;
-        Mdz=0.; Mgz=0.;
+        Mdx=0.;  Mdy=0.;  Mdz=0.; 
         for(h=-largeur;h<=largeur;h++)
         {     
             xx = (i+h)>0?(i+h):0;
@@ -1785,18 +1825,20 @@ for(k=0;k<Z;k++){
         }
     }
 }
+}
+endT=omp_get_wtime();
+//printf("Sequential: %f seconds\n",endT-startT);fflush(stdout);
 
-printf("Loop 3.... \n");fflush(stdout);
+//printf("Loop 3.... \n");fflush(stdout);
+
+double an2;
+#pragma omp parallel default(none) shared(X,Y,Z,largeur,beta,gradx2,grady2,gradz2,angles,modgrad) private(i,j,k,h,xx,yy,zz,coeff,Mdx,Mdy,Mdz,Mgx,Mgy,Mgz,ay,ax,az,adr,an,an2)   
+{
+#pragma omp for 
 for(k=0;k<Z;k++){
     //if((k%10)==0) {printf("(%d/%d)...",k,Z);fflush(stdout);}
     for(j=0;j<Y;j++) {
         for(i=0;i<X;i++) {
-        //Notationally: Let gradx1=Hxy, gradx2 = (Hxy)z
-        //Notationally: Let grady1=Hyz, grady2 = (Hyz)x
-        //Notationally: Let gradz1=Hzx, gradz2 = (Hzx)y
-        //sum over the latter letter in order to get azimuth from x,y
-        //For z, difference is verticle to get elevation 
-        /*GRADX*/       
         Mdx=0.; Mgx=0.;
         Mdy=0.; Mgy=0.;
         Mdz=0.; Mgz=0.;
@@ -1822,36 +1864,44 @@ for(k=0;k<Z;k++){
                 Mdz+=coeff*gradz2[zz+Z*(i +X*j )];
             }
         }
-        //switch sum order for y and x for proper directionality 
-        ay=log(Mdx/Mgx);
-        ax=log(Mdy/Mgy);
-        az=log(Mdz/Mgz);
-        /*COMPUTE GRADS AND STORE DATA*/
+        //SWAP AX AND AY per LSD ordering 
+        ay=(double)log(Mdx/Mgx);
+        ax=(double)log(Mdy/Mgy);
+        az=(double)log(Mdz/Mgz);
         adr = (unsigned int)  k+Z*(j*X+i);
-        
-        an= sqrt(ax*ax + ay*ay + az*az); 
-        //an=(double) sqrt((double)ax * (double)ax + 
-        //   (double)ay * (double)ay + 
-        //   (double)az * (double)az);
+        an= (double)sqrt(ax*ax + ay*ay + az*az); 
+        an2= (double)sqrt(ax*ax + ay*ay); 
         (*modgrad)->data[adr] =  an; /* store gradient norm */
+    
+
         if( an <= 0.0 ) /* norm too small, gradient no defined */
         {
-        angles->az->data[adr] = NOTDEF;
-        angles->el->data[adr] = NOTDEF;
+          angles->az->data[adr] = NOTDEF;
+          angles->el->data[adr] = NOTDEF;
         }
         else
         {
-        /* gradient angle computation */
-        angles->az->data[adr] = atan2( ax,-1*ay);
-        angles->el->data[adr] = acos(az/an);
-        /* look for the maximum of the gradient */
-        if( an > max_grad ) max_grad = an;
+          /* gradient angle computation */
+	  //caution: if ax is near 0, will cause a crash  
+	  if(an2<=0.0) angles->az->data[adr] =0.0;
+	  else angles->az->data[adr] = atan2(ay,ax);
+
+          angles->el->data[adr] = acos(az/an);
+          /* look for the maximum of the gradient */
         } 
         //printf("\naz: %.2f, el: %.2f, an: %.2f\n",angles->az->data[adr],angles->el->data[adr],an);fflush(stdout);
     }
     }
+    }
 }
-
+//MAXGRAD RACE CONDITION ERROR 
+for(k=0;k<Z;k++){
+    //if((k%10)==0) {printf("(%d/%d)...",k,Z);fflush(stdout);}
+    for(j=0;j<Y;j++) {
+        for(i=0;i<X;i++) {
+            an= (double) (*modgrad)->data[k+Z*(j*X+i)]; 
+	    if( an > max_grad ) max_grad = an;
+}}}
 
 free((void *) gradx1);
 free((void *) grady1);
@@ -2948,9 +2998,31 @@ static int isaligned3(double grads_az,double grads_el,double theta_az,double the
   ///double  dl2[3] =  {cos(az)*sin(el), sin(az)*sin(el),cos(el)};
   ///for(int i=0;i<3;i++) dot+=dl1[i]*dl2[i];
   ///double diff =  fabs(dot);
-  double diff = (cos(grads_az)*sin(grads_el)*cos(theta_az)*sin(theta_el)) + (   sin(grads_az)*sin(grads_el)*sin(theta_az)*sin(theta_el)) + (  cos(grads_el)*cos(theta_el) )   ;
 
+  //double diff = (gsl_sf_cos(grads_az)*gsl_sf_sin(grads_el)*gsl_sf_cos(theta_az)*gsl_sf_sin(theta_el)) + (   gsl_sf_sin(grads_az)*gsl_sf_sin(grads_el)*gsl_sf_sin(theta_az)*gsl_sf_sin(theta_el)) + (  gsl_sf_cos(grads_el)*gsl_sf_cos(theta_el) )   ;
+  //double diff = (cos(grads_az)*sin(grads_el)*cos(theta_az)*sin(theta_el)) + (   sin(grads_az)*sin(grads_el)*sin(theta_az)*sin(theta_el)) + (  cos(grads_el)*cos(theta_el) )   ;
+  double sGel,sTel,cGel,cTel;
+  sincos(grads_el,&sGel,&cGel);
+  sincos(theta_el,&sTel,&cTel);
+  double diff = sGel*sTel*cos(grads_az-theta_az) + cGel*cTel;
+  
+  double a = grads_az;
+  double theta = theta_az;
+  theta -= a;
+  if( theta < 0.0 ) theta = -theta;
+  if( theta > M_3_2_PI )
+    {
+      theta -= M_2__PI;
+      if( theta < 0.0 ) theta = -theta;
+    }
 
+  if  (theta <= prec)
+  	return (1.-fabs(diff))<=sin(prec);
+  else
+	return 0;
+  //double diff = sin(grads_el)*sin(theta_el)*cos(grads_az-theta_az) + cos(grads_el)*cos(theta_el);
+
+  //NOTE: (a*b)=|a||b|cos(theta), so require |cos(theta)|<cos(pi/2 - tol)
 
 //printf("\t\t\t\t Free and return comparison ...\n");
   //fflush(stdout);
@@ -2965,11 +3037,19 @@ static int isaligned3(double grads_az,double grads_el,double theta_az,double the
   //return acos(1-diff)<=prec;
   //return diff <= cos(M_PI/2.- prec);
   //printf("%.2f\n",prec);fflush(stdout);
-  return fabs(diff) <= cos(M_PI/2. - prec);
-  //return (1-diff)<=cos(M_PI/2. - prec);
+  //return fabs(diff) <= cos(M_PI/2. - prec);
   //
 }
 
+static int isorthogonal3(double grads_az,double grads_el,double theta_az,double theta_el,double prec)
+{
+  if( prec < 0.0 ) error("isaligned3: 'prec' must be positive.");
+  if( grads_az == NOTDEF ) return FALSE;
+  if( grads_el == NOTDEF ) return FALSE;
+  double diff = sin(grads_el)*sin(theta_el)*cos(grads_az-theta_az) + cos(grads_el)*cos(theta_el);
+  return fabs(diff)<=sin(prec);
+  //
+}
 
 /*----------------------------------------------------------------------------*/
 /*----------------------------- NFA computation ------------------------------*/
@@ -3595,27 +3675,27 @@ static void ri3_inc(rect3_iter * i)
   {
       //up_all3(i);
       // if not at end of exploration, inc. y to next 'col'
-      if(!(ri3z_end(i))) i->yt++;
+      if(!(ri3z_end(i))) i->zt++;
       
       //up_all3(i);
       //if at end of col, inc. x to next row
-      while( (i->yt > i->yspan) && !(ri3z_end(i)) )
+      while( (i->zt > i->zspan) && !(ri3z_end(i)) )
       {
-        if(!(ri3z_end(i))) i->xt++;
+        if(!(ri3z_end(i))) i->yt++;
         
         //up_all3(i);
-        while( (i->xt > i->xspan) && !(ri3z_end(i)) )   
+        while( (i->yt > i->yspan) && !(ri3z_end(i)) )   
         {
-            i->zt++;
+            i->xt++;
             
             //up_all3(i);
             if(ri3z_end(i)){up_all3(i); return;}
-            i->xt=0;
+            i->yt=0;
             //up_all3(i);
         }
         if(ri3z_end(i)) {up_all3(i); return;}
         //set yt to zero.  'ys' is f(v[0],xt)
-        i->yt = 0;
+        i->zt = 0;
         //up_all3(i);
       }
       //Update cartesian pixel coordinate 
@@ -3842,53 +3922,59 @@ static rect3_iter * ri3_ini(struct rect3 * r)
   offset=1;
   double tx[8],ty[8], tz[8];
   //printf("%.0f...",vy[0]);fflush(stdout);
+
   while(vx[0]>vx[1] || vx[0]>vx[2] || vx[0]>vx[3])
   {
-    for(n=0;n<8;n++)
-    {
-        tx[n]=vx[n];
-        ty[n]=vy[n];
-        tz[n]=vz[n];
-    }
-    for(n=0;n<4;n++)
-    {
-        //z1
-        vx[n] = tx[(offset+n)%4];
-        vy[n] = ty[(offset+n)%4];
-        vz[n] = tz[(offset+n)%4];
-        //z2
-        vx[n+4] = tx[(offset+n)%4+4];
-        vy[n+4] = ty[(offset+n)%4+4];
-        vz[n+4] = tz[(offset+n)%4+4];
-    }
-  }
-  if (vx[0]>vx[4])
-  {
-    for(n=0;n<8;n++)
-    {
-        tx[n]=vx[n];
-        ty[n]=vy[n];
-        tz[n]=vz[n];
-    }
-    for(n=0;n<4;n++)
-    {
+	  while(vx[0]>vx[1] || vx[0]>vx[2] || vx[0]>vx[3])
+	  {
+	    for(n=0;n<8;n++)
+	    {
+		tx[n]=vx[n];
+		ty[n]=vy[n];
+		tz[n]=vz[n];
+	    }
+	    for(n=0;n<4;n++)
+	    {
+		//z1
+		vx[n] = tx[(offset+n)%4];
+		vy[n] = ty[(offset+n)%4];
+		vz[n] = tz[(offset+n)%4];
+		//z2
+		vx[n+4] = tx[(offset+n)%4+4];
+		vy[n+4] = ty[(offset+n)%4+4];
+		vz[n+4] = tz[(offset+n)%4+4];
+	    }
+	  }
+	  if (vx[0]>vx[4])
+	  {
+	    for(n=0;n<8;n++)
+	    {
+		tx[n]=vx[n];
+		ty[n]=vy[n];
+		tz[n]=vz[n];
+	    }
+	    for(n=0;n<4;n++)
+	    {
 
-        //z1
-        vx[n] = tx[n+4];
-        vy[n] = ty[n+4];
-        vz[n] = tz[n+4];
-        //z2
-        vx[n+4] = tx[n];
-        vy[n+4] = ty[n];
-        vz[n+4] = tz[n];
-    }
+		//z1
+		vx[n] = tx[n+4];
+		vy[n] = ty[n+4];
+		vz[n] = tz[n+4];
+		//z2
+		vx[n+4] = tx[n];
+		vy[n+4] = ty[n];
+		vz[n+4] = tz[n];
+	    }
+	  }
+	  for(n=0;n<8;n++)
+	  {
+	      i->vx[n]=vx[n];
+	      i->vy[n]=vy[n];
+	      i->vz[n]=vz[n];
+	  }
   }
-  for(n=0;n<8;n++)
-  {
-      i->vx[n]=vx[n];
-      i->vy[n]=vy[n];
-      i->vz[n]=vz[n];
-  }
+  
+
 
   //printf("%.2f\t",vy[0]);fflush(stdout);
 
@@ -3917,18 +4003,32 @@ static rect3_iter * ri3_ini(struct rect3 * r)
   i->xspan = r->length; 
   i->yspan = r->width1;
   i->zspan = r->width2;
-  i->xt = i->yt = i->zt = i->xd = i->yd = i->zd = 0;
+  i->xt = 0; i->yt = 0; i->zt = 0; i->xd = 0; i->yd = 0; i->zd = 0;
   
-  //double  dl[3] =  {caz*sel, saz*sel,  cel};
-  //double dw1[3] =  {caz*cel, saz*cel, -sel};
-  //double dw2[3] =  {-saz*sel, -caz*sel, 0};
 
+  double saz,caz,sel,cel;
+  sincos(r->theta->az,&saz,&caz);
+  sincos(r->theta->el,&sel,&cel);
+  saz=fabs(saz);caz=fabs(caz);sel=fabs(sel);cel=fabs(cel);
+  /*
+  double caz,saz,cel,sel;
+  caz = fabs(cos(r->theta->az));
+  saz = fabs(sin(r->theta->az));
+  cel = fabs(cos(r->theta->el));
+  sel = fabs(sin(r->theta->el));
+  */
+  double  dl[3] =  {caz*sel, saz*sel,  cel};
+  //double dw1[3] =  {-saz*sel, caz*sel, 0};
+  double dw1[3] =  {-saz, caz, 0};
+  double dw2[3] =  {caz*cel, saz*cel, -sel};
+  
   for(n=0;n<3;n++) 
   {
-    i->dl[n]  = fabs(r->dl[n]);
-    i->dw2[n] = fabs(r->dw2[n]);
-    if(n==2) i->dw2[n] *= -1.;
-    i->dw1[n] = -1.*fabs(r->dw1[n]);
+    i->dl[n]  = dl[n];//fabs(r->dl[n]);
+    i->dw1[n] = dw1[n];//fabs(r->dw1[n]);
+    i->dw2[n] = dw2[n];//fabs(r->dw2[n]);
+    //if(n==0) i->dw1[n] *= -1.;
+    //if(n==2) i->dw2[n] *= -1.;
     //if(n==0 || n==1) i->dw2[n] *= -1.;
   }  
   if(i->vy[0] < i->vy[2]) for(n=0;n<3;n++) i->dw1[n]*=-1.; 
@@ -3984,19 +4084,121 @@ static double rect3_nfa(struct rect3 * rec, grads angles, double logNT,double *i
   //printf("\n rec dz %.2f\n",rec->z2-rec->z1);
   int tester=0;
   double grads_az, grads_el;
+  int xsize=(int) angles->az->xsize;
+  int ysize=(int) angles->az->ysize;
+  int zsize=(int) angles->az->zsize;
+  double theta_az = rec->theta->az;
+  double theta_el = rec->theta->el;
+  double prec = rec->prec;
+  //double* az = (double*) angles->az->data;
+  //double* el = (double*) angles->el->data;
+  
+  /* 
+  int* x;int* xtmp;
+  int* y;int* ytmp;
+  int* z;int* ztmp;
+  printf("beginning pt count:\n");fflush(stdout);
+  for(i=ri3_ini(rec); !ri3z_end(i); ri3_inc(i))
+  {
+  	if( i->x >= 0 && i->y >= 0 && i->z >=0 &&
+        	i->x < xsize && i->y < ysize && i->z < zsize)
+      	{
+ 		++pts;
+		printf("(%d,%d,%d)...",i->x,i->y,i->z);fflush(stdout);
+		if(pts==1) {
+			xtmp = (int*) malloc(sizeof(int));
+			ytmp = (int*) malloc(sizeof(int));
+			ztmp = (int*) malloc(sizeof(int));
+		}
+		else{
+			xtmp = realloc(x,pts*sizeof(int));
+			ytmp = realloc(y,pts*sizeof(int));
+			ztmp = realloc(z,pts*sizeof(int));
+		}
+		
+		x = xtmp; x[pts] = (int) i->x;
+		y = ytmp; y[pts] = (int) i->y;
+		z = ztmp; z[pts] = (int) i->z;
+	}
+  }
+  printf("\n");fflush(stdout);
+  ri3_del(i); 
+
+  if(pts<minreg)
+      return -1;
+  int j;
+
+#pragma omp parallel default(none) shared(x,y,z,xsize,zsize,az,el,theta_az,theta_el,prec,pts,alg) private(j,grads_az,grads_el)   
+ {
+ #pragma omp for reduction(+:alg)
+  for(j=0; j<=pts; j++) // rectangle iterator 
+  {
+        grads_az = az[ z[j] + zsize*(x[j] + y[j] * xsize) ]; 
+        grads_el = el[ z[j] + zsize*(x[j] + y[j] * xsize) ];
+        if(isaligned3(grads_az,grads_el, theta_az, theta_el, prec)) ++alg;
+        //if( isaligned3(i->x, i->y,i->z, angles, rec->theta, rec->prec) ) ++alg; 
+        // aligned points counter 
+  }
+  }
+*/
+
+  for(i=ri3_ini(rec); !ri3z_end(i); ri3_inc(i)) // rectangle iterator 
+  {
+  if( i->x >= 0 && i->y >= 0 && i->z >=0 &&
+        i->x < xsize && i->y < ysize && i->z < zsize)
+      {
+        ++pts; // total number of pixels counter 
+        grads_az = angles->az->data[ i->z + zsize*(i->x + i->y * xsize) ]; 
+        grads_el = angles->el->data[ i->z + zsize*(i->x + i->y * xsize) ];
+        if(isorthogonal3(grads_az,grads_el, theta_az, theta_el, prec)) ++alg;
+        //if( isaligned3(i->x, i->y,i->z, angles, rec->theta, rec->prec) ) ++alg; 
+        // aligned points counter 
+      }
+  }
+  
+
+  //if (tester==1) {printf("%d",pts);fflush(stdout);}
+  ri3_del(i); /* delete iterator */
+  //printf("\t\tpts %d, minreg %d, alg %d\n",pts,minreg,alg);  fflush(stdout);
+  if(pts<minreg)
+      return -1;
+  else
+  return nfa(pts,alg,rec->p,logNT,image,N); /* compute NFA value */
+}
+
+static double rect3_nfa_backup(struct rect3 * rec, grads angles, double logNT,double *image,int N,int minreg)
+{
+  rect3_iter * i;
+  int pts = 0;
+  int alg = 0;
+
+  /* check parameters */
+  if( rec == NULL ) error("rect3_nfa: invalid rectangle.");
+  if( angles == NULL ) error("rect3_nfa: invalid grads structure 'angles'.");
+  if( angles->az->data ==NULL || angles->el->data ==NULL) error("rect3_nfa:invalid az/el images withing grads structure 'angles'");
+
+  /* compute the total number of pixels and of aligned points in 'rec' */
+  //printf("\n rec dz %.2f\n",rec->z2-rec->z1);
+  int tester=0;
+  double grads_az, grads_el;
+  int xsize=(int) angles->az->xsize;
+  int ysize=(int) angles->az->ysize;
+  int zsize=(int) angles->az->zsize;
+  double theta_az = rec->theta->az;
+  double theta_el = rec->theta->el;
+  double prec = rec->prec;
   for(i=ri3_ini(rec); !ri3z_end(i); ri3_inc(i)) /* rectangle iterator */
   {
   //printf("(%d,%d,%d)",i->x,i->y,i->z);  fflush(stdout);  
   if( i->x >= 0 && i->y >= 0 && i->z >=0 &&
-        i->x < (int) angles->az->xsize && i->y < (int) angles->az->ysize &&
-        i->z < (int) angles->az->zsize)
+        i->x < xsize && i->y < ysize && i->z < zsize)
       {
     tester=1;
         ++pts; /* total number of pixels counter */
         
-        grads_az = angles->az->data[ i->z + angles->az->zsize*(i->x + i->y * angles->az->xsize) ]; 
-        grads_el = angles->el->data[ i->z + angles->el->zsize*(i->x + i->y * angles->el->xsize) ];
-        if(isaligned3(grads_az,grads_el, rec->theta->az, rec->theta->el, rec->prec)) ++alg;
+        grads_az = angles->az->data[ i->z + zsize*(i->x + i->y * xsize) ]; 
+        grads_el = angles->el->data[ i->z + zsize*(i->x + i->y * xsize) ];
+        if(isaligned3(grads_az,grads_el, theta_az, theta_el, prec)) ++alg;
         //if( isaligned3(i->x, i->y,i->z, angles, rec->theta, rec->prec) ) ++alg; 
         /* aligned points counter */
       }
@@ -4018,7 +4220,6 @@ static double rect3_nfa(struct rect3 * rec, grads angles, double logNT,double *i
   else
   return nfa(pts,alg,rec->p,logNT,image,N); /* compute NFA value */
 }
-
 
 /*----------------------------------------------------------------------------*/
 /*---------------------------------- Regions ---------------------------------*/
@@ -4146,7 +4347,8 @@ static double get_theta( struct point * reg, int reg_size, double x, double y,
     - cx and cy are the coordinates of the center of th region.
 
     Eigendecomposition by GSL for real symmetric matrices.
-    Returns az/el of the *principle* eigenvector for *orthogonal* 'alignment'.
+    Returns az/el of the *principle* eigenvector for region, for 
+    (orthogonal) alignment checks of new pixels.
     The orthogonality check means there is no orientation ambiguity.  
  */
 
@@ -4224,7 +4426,8 @@ static angles3 get_theta3( struct point3 * reg, int reg_size, double x, double y
   //Get principle eigenvector
   int out = gsl_eigen_symmv(Imat, eval, evec, ework);
   //for(i=0;i<3;i++) gsl_vector_set(eval,i,abs(gsl_vector_get(eval,i)));
-  size_t idx = gsl_vector_max_index(eval);
+  if(~gsl_vector_ispos(eval)) {for(i=0;i<3;i++) gsl_vector_set(eval,i,fabs(gsl_vector_get(eval,i)));}
+  size_t idx = gsl_vector_min_index(eval);
   double xv = gsl_matrix_get(evec, 0, idx);
   double yv = gsl_matrix_get(evec, 1, idx);
   double zv = gsl_matrix_get(evec, 2, idx);
@@ -4371,7 +4574,7 @@ static void region2rect3( struct point3 * reg, int reg_size,
 
   //printf("\t\t Centering...\n");
   //fflush(stdout);
-  x = y = z = sum = 0.0;
+  x = 0; y = 0; z = 0; sum = 0.0;
   for(i=0; i<reg_size; i++)
     {
       weight = modgrad->data[ reg[i].z + (reg[i].x + reg[i].y * modgrad->xsize) 
@@ -4410,14 +4613,20 @@ static void region2rect3( struct point3 * reg, int reg_size,
 
   //printf("\t\t Get Derivatives...\n");
   //fflush(stdout);
+  //
+  double saz,caz,sel,cel;
+  sincos(theta->az,&saz,&caz);
+  sincos(theta->el,&sel,&cel);
+  /* 
   double caz,saz,cel,sel;
   caz = cos(theta->az);
   saz = sin(theta->az);
   cel = cos(theta->el);
   sel = sin(theta->el);
-
+  */
   double  dl[3] =  {caz*sel, saz*sel,  cel};
-  double dw1[3] =  {-saz*sel, -caz*sel, 0};
+  //double dw1[3] =  {-saz*sel, caz*sel, 0};
+  double dw1[3] =  {-saz, caz, 0};
   double dw2[3] =  {caz*cel, saz*cel, -sel};
 
   //double dw1[3] =  {   -saz,     cel,    0};
@@ -4425,7 +4634,7 @@ static void region2rect3( struct point3 * reg, int reg_size,
 
   //printf("\t\t Get length...\n");
   //fflush(stdout);
-  l_min = l_max = w1_min = w1_max = w2_min = w2_max = 0.0;
+  l_min = 0.;l_max = 0.;w1_min = 0.;w1_max =0.; w2_min =0.; w2_max = 0.0;
   for(i=0; i<reg_size; i++)
     {
       l =  ( (double) reg[i].x - x) * dl[0] + ( (double) reg[i].y - y) * dl[1] + 
@@ -4542,9 +4751,11 @@ static void region_grow( int x, int y, image_double angles, struct point * reg,
 /** Build a region of pixels that share the same angle, up to a
     tolerance 'prec', starting at point (x,y).
  */
-static void region3_grow( int x, int y,int z, grads angles, struct point3 * reg,
-                         int * reg_size, angles3 * reg_angle, image3_char used,
-                         double prec )
+//grads angles
+static void region3_grow(int x, int y,int z, grads angles, 
+			 struct point3 * reg,
+                         int * reg_size, angles3 * reg_angle, 
+			 image3_char used,double prec ,int NOUT)
 {
   
   //printf("\t\t Initialize...\n");
@@ -4554,8 +4765,8 @@ static void region3_grow( int x, int y,int z, grads angles, struct point3 * reg,
   int xx,yy,zz,i;
 
   /* check parameters */
-  if( x < 0 || y < 0 || z<0 || x >= (int) angles->az->xsize 
-          || y >= (int) angles->az->ysize || z >= (int) angles->az->zsize)
+  if( x < 0 || y < 0 || z<0 || x >= (int) used->xsize 
+          || y >= (int) used->ysize || z >= (int) used->zsize)
     error("region3_grow: (x,y,z) out of the image.");
   if( angles->az == NULL || angles->az->data == NULL )
     error("region3_grow: invalid grads 'angles' or image 'az'.");
@@ -4576,60 +4787,82 @@ static void region3_grow( int x, int y,int z, grads angles, struct point3 * reg,
  
   //printf("\t\t Get angles...\n");
   //fflush(stdout);
-  (*reg_angle)->az = angles->az->data[z + (x+y*angles->az->xsize)*angles->az->zsize]; 
-  (*reg_angle)->el = angles->el->data[z + (x+y*angles->el->xsize)*angles->el->zsize]; 
-  calc_quat(&(*reg_angle));
+  int xsize = (int)used->xsize;
+  int ysize = (int)used->ysize;
+  int zsize = (int)used->zsize;
+  //(*reg_angle)->az = angles->az->data[z + (x+y*xsize)*zsize]; 
+  //(*reg_angle)->el = angles->el->data[z + (x+y*xsize)*zsize]; 
+  
+  double reg_az, reg_el;
+  reg_az = angles->az->data[z + (x+y*xsize)*zsize]; 
+  reg_el = angles->el->data[z + (x+y*xsize)*zsize]; 
+  //calc_quat(&(*reg_angle));
   //printf("\t\t Get derivatives...\n");
   //fflush(stdout);
-  sumdx = cos((*reg_angle)->az)*sin((*reg_angle)->el);
-  sumdy = sin((*reg_angle)->az)*sin((*reg_angle)->el);
-  sumdz = cos((*reg_angle)->el);
-  used->data[z+(x+y*used->xsize)*used->zsize] = USED;
-  double azi,eli;//local azimuth and elecation
+
+  double saz,caz,sel,cel;	    
+  sincos(reg_az,&saz,&caz);
+  sincos(reg_el,&sel,&cel);
+  sumdx = caz*sel;
+  sumdy = saz*sel;
+  sumdz = cel;
+  used->data[z+(x+y*xsize)*zsize] = USED;
   /* try neighbors as new region points */
 
   //printf("\t\t Grow Loop...\n");
   //fflush(stdout);
   double grads_az,grads_el;
+
+  //#pragma omp parallel default(none) shared(xsize,ysize,zsize,azimg,elimg,prec,vp_0,vp_1) private(xx,yy,zz,grads_az,grads_el,x_t,x_tminus,vp_x1,vp_x0,vp_11,vp_10)   
+  //{
+  //#pragma omp for reduction(+:vp_0) reduction(+:vp_1)
+  //if(i<NOUT)
+  //int coscount=0;
   for(i=0; i<*reg_size; i++)
-    for(xx=reg[i].x-1; xx<=reg[i].x+1; xx++)
-      for(yy=reg[i].y-1; yy<=reg[i].y+1; yy++)
     for(zz=reg[i].z-1; zz<=reg[i].z+1; zz++) 
+    for(yy=reg[i].y-1; yy<=reg[i].y+1; yy++)
+    for(xx=reg[i].x-1; xx<=reg[i].x+1; xx++)
        {
-        grads_az = angles->az->data[ zz + used->zsize*(xx + yy * used->xsize) ]; 
-        grads_el = angles->el->data[ zz + used->zsize*(xx + yy * used->xsize) ]; 
+        grads_az = angles->az->data[ zz + zsize*(xx + yy * xsize) ]; 
+        //grads_az = angles->az->data[ zz + zsize*(xx + yy * xsize) ]; 
+        grads_el = angles->el->data[ zz + zsize*(xx + yy * xsize) ]; 
+        //grads_el = angles->el->data[ zz + zsize*(xx + yy * xsize) ]; 
         //isaligned3(xx,yy,zz,angles,*reg_angle,prec) )
         if( xx>=0 && yy>=0 && zz>=0 && 
-            xx<(int)used->xsize && yy<(int)used->ysize &&
-            zz<(int)used->zsize &&
-            used->data[zz+(xx+yy*used->xsize)*used->zsize] != USED &&
-            isaligned3(grads_az,grads_el,(*reg_angle)->az,(*reg_angle)->el,prec) )
+            xx<xsize && yy<ysize &&
+            zz<zsize &&
+            used->data[zz+(xx+yy*xsize)*zsize] != USED &&
+            isaligned3(grads_az,grads_el,reg_az,reg_el,prec) )
           {
           
             //printf("\t\t\t Add points...\n");
-            fflush(stdout);
+            //fflush(stdout);
             /* add point */
-            used->data[zz+(xx+yy*used->xsize)*used->zsize] = USED;
+            used->data[zz+(xx+yy*xsize)*zsize] = USED;
             reg[*reg_size].x = xx;
             reg[*reg_size].y = yy;
             reg[*reg_size].z = zz;
             ++(*reg_size);
-
-            //printf("\t\t\t Update angle...\n");
+ 
+            sincos(grads_az,&saz,&caz);
+  	    sincos(grads_el,&sel,&cel);
+            //printf("\t\t\t (%.2f,%.2f),(%.2f,%.2f)\n",grads_az*180./M_PI,grads_el*180./M_PI,reg_az*180./M_PI,reg_el*180./M_PI);
             //fflush(stdout);
             /* update region's angle */
-            azi = angles->az->data[zz+(xx+yy*angles->az->xsize)*angles->az->zsize];
-            eli = angles->el->data[zz+(xx+yy*angles->el->xsize)*angles->el->zsize];
-            sumdx += cos(azi)*sin(eli);
-            sumdy += sin(azi)*sin(eli);
-            sumdz += cos(eli);
-            (*reg_angle)->az = atan2(sumdy,sumdx);
-            (*reg_angle)->el = acos(sumdz/sqrt(sumdx*sumdx+sumdy*sumdy+sumdz*sumdz));
-            calc_quat(&(*reg_angle)); 
+            sumdx += caz*sel;
+            sumdy += saz*sel;
+            sumdz += cel;
+	    //coscount++;
+            reg_az = atan2(sumdy,sumdx);
+            reg_el = acos(sumdz/sqrt(sumdx*sumdx + sumdy*sumdy + sumdz*sumdz));
+            //sum is NOT necessarily normalized due to incrementation  
+	    //calc_quat(&(*reg_angle)); 
             //printf("\t\t\t Updated!\n");
             //fflush(stdout);
           }}
-
+	(*reg_angle)->az=reg_az;
+	(*reg_angle)->el=reg_el;
+	//printf("next\n\n\n");fflush(stdout);
   //printf("\t\tEnd Grow\n");
   //fflush(stdout);
 }
@@ -5244,13 +5477,14 @@ static int refine( struct point * reg, int * reg_size, image_double modgrad,
  */
 static int refine3( struct point3 * reg, int * reg_size, image3_double modgrad,
                    angles3 reg_angle, double prec, double p, struct rect3 * rec,
-                   image3_char used, grads angles, double density_th )
+                   image3_char used, grads angles,
+		   double density_th , int NOUT)
 {
-  double ang_d;
-  double tau,density,xc,yc,zc;
-  double sum,s_sum,mean_angle;
-  angles3 ang_c, ang;
-  int i,n;
+  //double ang_d;
+  double tau,density;//,xc,yc,zc;
+  //double sum,s_sum,mean_angle;
+  //angles3 ang_c, ang;
+  int i;//,n;
 
   /* check parameters */
   if( reg == NULL ) error("refine3: invalid pointer 'reg'.");
@@ -5273,22 +5507,28 @@ static int refine3( struct point3 * reg, int * reg_size, image3_double modgrad,
   /*------ First try: reduce angle tolerance ------*/
 
   /* compute the new mean angle and tolerance */
+  /*
   xc = (double) reg[0].x;
   yc = (double) reg[0].y;
   zc = (double) reg[0].z;
   double az_c = angles->az->data[ reg[0].z + (reg[0].x + reg[0].y * angles->az->xsize) * angles->az->zsize ];
   double el_c = angles->el->data[ reg[0].z + (reg[0].x + reg[0].y * angles->el->xsize) * angles->el->zsize ];
   ang_c = new_angles3(az_c,el_c);
-
+  */
   //Initialization of ang_d - to be overwritten 
-  ang = new_angles3(az_c,el_c);
-  sum = s_sum = 0.0;
-  n = 0;
-  /*
+  //ang = new_angles3(az_c,el_c);
+  //sum = s_sum = 0.0;
+  //n = 0;
+  int xsize = (int) used->xsize;
+  int zsize = (int) used->zsize;
+  //scrub used memory for regrowing  
   for(i=0; i<*reg_size; i++)
     {
-      used->data[ reg[i].z + (reg[i].x + reg[i].y * used->xsize) * used->zsize ] = NOTUSED;
-      if( dist3( xc, yc, zc, (double) reg[i].x, (double) reg[i].y, (double) reg[i].z) < min1(rec->width1,rec->width2) )
+      used->data[ reg[i].z + (reg[i].x + reg[i].y * xsize) * zsize ] = NOTUSED;
+    }  
+  
+	/*
+ 	if( dist3( xc, yc, zc, (double) reg[i].x, (double) reg[i].y, (double) reg[i].z) < min1(rec->width1,rec->width2) )
         {
           ang->az = angles->az->data[ reg[i].z + ( reg[i].x + reg[i].y * angles->az->xsize ) * angles->az->zsize ];
           ang->el = angles->el->data[ reg[i].z + ( reg[i].x + reg[i].y * angles->el->xsize ) * angles->el->zsize ];
@@ -5303,13 +5543,13 @@ static int refine3( struct point3 * reg, int * reg_size, image3_double modgrad,
   tau = 2.0 * sqrt( (s_sum - 2.0 * mean_angle * sum) / (double) n
                          + mean_angle*mean_angle ); // 2 * standard deviation 
   */
-  free_angles3(ang_c);
-  free_angles3(ang);
+  //free_angles3(ang_c);
+  //free_angles3(ang);
   //NOTE - FIXED TAU IGNORES THIS COMPUTATION, BUR RUNNING FOR FUTURE USE  
   /* find a new region from the same starting point and new angle tolerance */
   
   tau=prec/2.0;
-  region3_grow(reg[0].x,reg[0].y,reg[0].z,angles,reg,reg_size,&reg_angle,used,tau);
+  region3_grow(reg[0].x,reg[0].y,reg[0].z,angles,reg,reg_size,&reg_angle,used,tau,NOUT);
 /*prec = M_PI * ang_th / 180.0;
   p = ang_th / 180.0;*/
   p=tau/M_PI;
@@ -5416,6 +5656,7 @@ static void NFA_matrix(double *output,double p0,double p11,double p01,int N)
 /** Given a conditioning image, estimate the Markov transition probabilities  for 
  *  Gradient-by-Ratio computation, P(1|1) and P(1|0).  
  */
+
 static void make_markov( double * img, int X, int Y,
                            double ang_th, int n_bins,
                            double * inputv)
@@ -5516,19 +5757,19 @@ static int isaligned3_markovV(double grads_az,double grads_el,double prec)
 {
   if( grads_az == NOTDEF || grads_el == NOTDEF ) return FALSE;
   double diff = fabs(cos(grads_az)*sin(grads_el))   ;
-  return diff <= cos(M_PI/2. - prec);
+  return (diff) <= sin(prec);
 }
 static int isaligned3_markovH(double grads_az,double grads_el,double prec)
 {
   if( grads_az == NOTDEF || grads_el == NOTDEF ) return FALSE;
   double diff = fabs(sin(grads_az)*sin(grads_el))    ;
-  return diff <= cos(M_PI/2. - prec);
+  return (diff) <= sin(prec);
 }
 static int isaligned3_markovD(double grads_az,double grads_el,double prec)
 {
   if( grads_az == NOTDEF || grads_el == NOTDEF ) return FALSE;
   double diff =  fabs(cos(grads_el))   ;
-  return diff <= cos(M_PI/2. - prec);
+  return (diff) <= sin(prec);
 }
 /** Given a conditioning image, estimate the Markov transition probabilities  for 
  *  Gradient-by-Ratio computation, P(1|1) and P(1|0).  
@@ -5561,7 +5802,13 @@ static void make_markov3( double * img, int X, int Y, int Z,
   if(prec<0.0) error("MakeMarkov3: 'prec' must be positive");
   /* load and scale image (if necessary) and compute angle at each pixel */
   image = new_image3_double_ptr( (unsigned int) X, (unsigned int) Y, (unsigned int) Z, img );
+  
+  double start,end;
+  start=omp_get_wtime();
   angles = ll_angle3( image, &list_p, &mem_p, &modgrad, (unsigned int) n_bins,beta);
+  end=omp_get_wtime();
+  //printf("LL_ANGLE: %f seconds\n",end-start);fflush(stdout);
+  
   xsize = angles->az->xsize;
   ysize = angles->az->ysize;
   zsize = angles->az->zsize;
@@ -5610,10 +5857,15 @@ double grads_az,grads_el;
 for(ang_mult=5;ang_mult<=9;ang_mult+=2)
  {
  
-    printf("Make angle %d...",ang_mult);fflush(stdout);
+     //printf("Make angle %d...",ang_mult);fflush(stdout);
      hp_1=0; hp_0=0; vp_1=0;  vp_0=0; dp_1=0; dp_0=0;
      
      // iterate vertical lines
+     start=omp_get_wtime();
+     
+    #pragma omp parallel default(none) shared(xsize,ysize,zsize,azimg,elimg,prec,vp_0,vp_1) private(xx,yy,zz,grads_az,grads_el,x_t,x_tminus,vp_x1,vp_x0,vp_11,vp_10)   
+    {
+    #pragma omp for reduction(+:vp_0) reduction(+:vp_1)
     for(xx=0;xx<xsize;xx+=1)
      {
          //#pragma omp single    
@@ -5646,8 +5898,16 @@ for(ang_mult=5;ang_mult<=9;ang_mult+=2)
           vp_0+=vp_10/vp_x0;
           //}
       }
-      
+      }
+      end=omp_get_wtime();
+      //printf("Parallel: %f seconds\n",end-start);fflush(stdout);
      // iterate horizontal lines 
+     start=omp_get_wtime();
+
+
+    #pragma omp parallel default(none) shared(xsize,ysize,zsize,azimg,elimg,prec,hp_0,hp_1) private(xx,yy,zz,grads_az,grads_el,x_t,x_tminus,hp_x1,hp_x0,hp_11,hp_10)   
+    {
+    #pragma omp for reduction(+:hp_0) reduction(+:hp_1)
      for(yy=0;yy<ysize;yy+=1)
      {
          hp_x0 = 0; hp_10 = 0; hp_x1 = 0; hp_11 = 0;
@@ -5672,9 +5932,16 @@ for(ang_mult=5;ang_mult<=9;ang_mult+=2)
           }
           if( hp_x1>0) hp_1+=hp_11/hp_x1;
               hp_0+=hp_10/hp_x0;
-    }
-
+      }
+      }
+      end=omp_get_wtime();
+      //printf("Sequential: %f seconds\n",end-start);fflush(stdout);
      // iterate depth lines 
+     start=omp_get_wtime();
+
+    #pragma omp parallel default(none) shared(xsize,ysize,zsize,azimg,elimg,prec,dp_0,dp_1) private(xx,yy,zz,grads_az,grads_el,x_t,x_tminus,dp_x1,dp_x0,dp_11,dp_10)   
+    {
+    #pragma omp for reduction(+:dp_0) reduction(+:dp_1)
      for(zz=0;zz<zsize;zz+=1)
      {
          dp_x0 = 0; dp_10 = 0; dp_x1 = 0; dp_11 = 0;
@@ -5699,7 +5966,9 @@ for(ang_mult=5;ang_mult<=9;ang_mult+=2)
           if( dp_x1>0) dp_1+=dp_11/dp_x1;
               dp_0+=dp_10/dp_x0;
     }
-
+    }
+      end=omp_get_wtime();
+      //printf("Memflops: %f seconds\n",end-start);fflush(stdout);
      //Catch extrema cases 
      inputv[ang_mult]   = (hp_1 + vp_1 + dp_1)/(xsize+ysize+zsize);
      if(inputv[ang_mult]<=0) inputv[ang_mult]=0.0001;
@@ -5707,7 +5976,10 @@ for(ang_mult=5;ang_mult<=9;ang_mult+=2)
      inputv[ang_mult+1] = (hp_0 + vp_0 + dp_0)/(xsize+ysize+zsize);
      if(inputv[ang_mult+1]<=0) inputv[ang_mult+1]=0.0001;
      if(inputv[ang_mult+1]>=1) inputv[ang_mult+1]=0.9999;
-      
+     printf("prec %.2f\n",prec);
+     printf("\t p11 : \t H: %.2f, V: %.2f, D: %.2f, HV: %.2f, HVD: %.2f\n",hp_1/xsize,vp_1/ysize,dp_1/zsize,(hp_1+vp_1)/(xsize+ysize),inputv[ang_mult]); 
+     printf("\t p01 : \t H: %.2f, V: %.2f, D: %.2f, HV: %.2f, HVD: %.2f\n",hp_0/xsize,vp_0/ysize,dp_0/zsize,(hp_0+vp_0)/(xsize+ysize),inputv[ang_mult+1]); 
+     fflush(stdout);
      // reduce tolerance for next loop 
      prec/=2;
      
@@ -5720,6 +5992,9 @@ for(ang_mult=5;ang_mult<=9;ang_mult+=2)
   free_angles3(angv);
   free_angles3(angd);
   free_grads(angles);
+  //MAY REMOVE 
+  free((void *)azimg);
+  free((void *)elimg);
 }
 
 /*----------------------------------------------------------------------------*/
@@ -5836,6 +6111,8 @@ p0=1-p1;
 int min_reg_size_4;
 min_reg_size_4=(int) (-log_eps-logNT-log10(p1))/log10(p11)+1;
 NFA_matrix(output_4,p0,p11,p01,N);
+
+
 
   /* search for line segments */
   for(; list_p != NULL; list_p = list_p->next )
@@ -5995,7 +6272,8 @@ beta=inputv[0];
 int sizenum;
 sizenum=(int) inputv[3];
 
-
+    //printf("ImSize: %d\n",(int)sizenum);fflush(stdout);
+    //for(i=0;i<=10;i++){printf("Input %d : %.4f\n",i,inputv[i]);fflush(stdout);}
   //printf("Creating image3...\n");
   //fflush(stdout);
 
@@ -6046,7 +6324,7 @@ sizenum=(int) inputv[3];
   
    /* initialize some structures */
   if( reg_img != NULL && reg_x != NULL && reg_y != NULL && reg_z != NULL ) /* save region data */
-    region = new_image3_int_ini(angles->az->xsize,angles->az->ysize,angles->az->zsize,0);
+    region = new_image3_int_ini(xsize,ysize,zsize,0);
   used = new_image3_char_ini(xsize,ysize,zsize,NOTUSED);
   reg = (struct point3 *) calloc( (size_t) (xsize*ysize*zsize), sizeof(struct point3) );
   if( reg == NULL ) error("not enough memory!");
@@ -6068,10 +6346,13 @@ double p0,p1;
                                    
  min_reg_size=(int) (-log_eps-logNT-log10(p1))/log10(p11)+1;
  int N=sizenum;
+ //printf("COnstructing NFA_matrix 1\n");fflush(stdout);
   double *output;
   output=( double *) malloc(N*N*sizeof(double));
   int NOUT=N;
   NFA_matrix(output,p0,p11,p01,N);
+
+ //printf("COnstructing NFA_matrix 2\n");fflush(stdout);
   double *output_2;
   output_2=( double *) malloc(N*N*sizeof(double));
  p11=inputv[7];
@@ -6081,7 +6362,9 @@ p0=1-p1;
 int min_reg_size_2;
 min_reg_size_2=(int) (-log_eps-logNT-log10(p1))/log10(p11)+1;
 NFA_matrix(output_2,p0,p11,p01,N);
-  double *output_4;
+  
+ //printf("COnstructing NFA_matrix 3\n");fflush(stdout);
+double *output_4;
   output_4=( double *) malloc(N*N*sizeof(double));
   p11=inputv[9];
   p01=inputv[10];
@@ -6091,27 +6374,53 @@ int min_reg_size_4;
 min_reg_size_4=(int) (-log_eps-logNT-log10(p1))/log10(p11)+1;
 NFA_matrix(output_4,p0,p11,p01,N);
 
+ printf("All NFA matrices instantiated \n");fflush(stdout);
 
   printf("Searching for line segments...\n");
   fflush(stdout);
   int maxidx=0;
   int tempidx=0;
   /* search for line segments */
+//int percentcount=0;
+//int allcount=0;
+//printf("Percent complete: ");fflush(stdout);
+
+//double* az = (double*) angles->az->data;
+//double* el = (double*) angles->el->data;
+
+double * azimg;
+azimg = (double *) malloc(xsize*ysize*zsize*sizeof(double));
+double * elimg; 
+elimg = (double *) malloc(xsize*ysize*zsize*sizeof(double));
+for(i=0;i<(xsize*ysize*zsize);i++)
+{
+    azimg[i]= angles->az->data[i];
+    elimg[i]= angles->el->data[i];
+}
+double startT,endT,growtime,regiontime,refinetime,improvetime;
+int NOUT2=(int) xsize*ysize*zsize / 1;
 for(; list_p != NULL; list_p = list_p->next )
 {
-    if( used->data[ list_p->z + (list_p->x + list_p->y * used->xsize) * used->zsize ] == NOTUSED &&
-        angles->az->data[ list_p->z + (list_p->x + list_p->y * angles->az->xsize) * angles->az->zsize ] != NOTDEF  &&
-        angles->el->data[ list_p->z + (list_p->x + list_p->y * angles->el->xsize) * angles->el->zsize ] != NOTDEF  )
+    
+    //printf("%d...",allcount);fflush(stdout);
+    //if(allcount%1250000==0){printf("%d...",percentcount);fflush(stdout);percentcount++;}
+    //allcount++;
+    if( used->data[ list_p->z + (list_p->x + list_p->y *xsize) * zsize ] == NOTUSED &&
+        azimg[ list_p->z + (list_p->x + list_p->y * xsize)*zsize ] != NOTDEF  &&
+        elimg[ list_p->z + (list_p->x + list_p->y * xsize) *zsize ] != NOTDEF  )
        /* there is no risk of double comparison problems here
           because we are only interested in the exact NOTDEF value */
     {
 
     //printf("\t Growing...\n");
-    fflush(stdout);
+    //fflush(stdout);
         /* find the region of connected point and ~equal angle */
-        region3_grow( list_p->x, list_p->y, list_p->z, angles, reg, &reg_size,
-                     &reg_angle, used, prec );
-
+        
+	startT=omp_get_wtime();
+	region3_grow( list_p->x, list_p->y, list_p->z, angles, reg, &reg_size,
+                     &reg_angle, used, prec, NOUT2);
+	endT=omp_get_wtime();
+	growtime=endT-startT;
     //printf("\t Reject small ...\n");
     //fflush(stdout);
         /* reject small regions */
@@ -6122,8 +6431,11 @@ for(; list_p != NULL; list_p = list_p->next )
     //printf("\t Calc Rect...\n");
     //fflush(stdout);
         /* construct rectangular approximation for the region */
-        region2rect3(reg,reg_size,modgrad,reg_angle,prec,p,&rec);
 
+	startT=omp_get_wtime();
+        region2rect3(reg,reg_size,modgrad,reg_angle,prec,p,&rec);
+	endT=omp_get_wtime();
+	regiontime=endT-startT;
         /* Check if the rectangle exceeds the minimal density of
            region points. If not, try to improve the region.
            The rectangle will be rejected if the final one does
@@ -6136,26 +6448,32 @@ for(; list_p != NULL; list_p = list_p->next )
 
     //printf("\t Check refine...\n");
     //fflush(stdout);
-        if( !refine3( reg, &reg_size, modgrad, reg_angle,
-                     prec, p, &rec, used, angles, density_th ) ) continue;
-
+     	startT=omp_get_wtime();
+	 if( !refine3( reg, &reg_size, modgrad, reg_angle,
+                     prec, p, &rec, used, angles,density_th,NOUT2 ) ) continue;
+	endT=omp_get_wtime();
+	refinetime=endT-startT;
+	
         /* compute NFA value */ 
  
 
     //printf("\t Improve, get NFA, reg_size %d...\n",reg_size);
     //fflush(stdout);
-        log_nfa = rect3_improve(&rec,angles,logNT,log_eps,output,output_2,output_4,NOUT,min_reg_size,min_reg_size_2,min_reg_size_4);
         
+	startT=omp_get_wtime();
+	log_nfa = rect3_improve(&rec,angles,logNT,log_eps,output,output_2,output_4,NOUT,min_reg_size,min_reg_size_2,min_reg_size_4);
+        endT=omp_get_wtime();
+	improvetime=endT-startT;
         //if ( ls_total % 100 ==0 ){
     
     //printf("\t\t resolved %d, size %d...\n",ls_total, reg_size);
     //printf("\t\t resolved %d, size %d, z %.2f : %.2f...\n",ls_total, reg_size,rec.z1,rec.z2);
     //printf("\t\t\t (%.0f,%.0f,%.0f)-(%.0f,%.0f,%.0f) nfa %.2f, w(%.0f,%.0f)\n",rec.x1,rec.y1,rec.z1,rec.x2,rec.y2,rec.z2,log_nfa,rec.width1,rec.width2);
-    fflush(stdout);
+    //fflush(stdout);
         
-    ++ls_total;
+        //++ls_total;
         if( log_nfa <= log_eps ) continue;
-
+	printf("grow: %.4f, region: %.4f, refine: %.4f, improve: %.4f\n",growtime,regiontime,refinetime,improvetime);fflush(stdout);
         /* A New Line Segment was found! */
         ++ls_count;  /* increase line segment counter */
 
@@ -6164,15 +6482,15 @@ for(; list_p != NULL; list_p = list_p->next )
            points with an offset of (0.5,0.5), that should be added to output.
            The coordinates origin is at the center of pixel (0,0).
          */
-        rec.x1 += 0.; rec.y1 += 0.; rec.z1 += 0.;
-        rec.x2 += 0.; rec.y2 += 0.; rec.z2 += 0.;
+        //rec.x1 += 0.; rec.y1 += 0.; rec.z1 += 0.;
+        //rec.x2 += 0.; rec.y2 += 0.; rec.z2 += 0.;
 
       
 
         /* add line segment found to output */
 
-    //printf("\t Add line and fix region: l %.2f w %.2f w %.2f, azel: (%.2f, %.2f)...\n",rec.length,rec.width1,rec.width2, rec.theta->az*180./M_PI, rec.theta->el*180./M_PI);
-    //fflush(stdout);
+        printf("\t LINE: NFA %.2f, lww: (%.2f, %.2f, %.2f), azel: (%.2f, %.2f)...\n",log_nfa,rec.length,rec.width1,rec.width2, rec.theta->az*180./M_PI, rec.theta->el*180./M_PI);
+  	fflush(stdout);
         add_10tuple( out, rec.x1, rec.y1, rec.z1, rec.x2, rec.y2, rec.z2, 
                          rec.width1, rec.width2, rec.p, log_nfa );
 
@@ -6199,7 +6517,8 @@ for(; list_p != NULL; list_p = list_p->next )
 free((void *) output); 
 free((void *) output_2);
 free((void *) output_4);
-
+free(azimg);
+free(elimg);
  //printf("Returning results...\n");fflush(stdout);
 
 
@@ -6736,20 +7055,30 @@ double * CLSD3_Pipeline( int * n_out,
 
     //Fix sizenum variable for noise image (l*5), 
     //1e5 rather than 1e4 for new dimension  
-    double sizenum = 5.*sqrt((double)X0*(double)X0 + 
+    double sizenum = pow(10.,3)*sqrt((double)X0*(double)X0 + 
                      (double)Y0*(double)Y0 + 
                  (double)Z0*(double)Z0);
-    if(sizenum>pow(10.,3)) sizenum=pow(10.,3);
+    if(sizenum>pow(10.,6)) sizenum=pow(10.,6);
+    printf("ImSize: %d",(int)sizenum);fflush(stdout);
     inputv[3] = sizenum;
     ang_th=ang_th;
     //n_bins*=2;
     //Caluculate Markov kernel
+    double start,end;
+    start=omp_get_wtime();
     make_markov3( img0, X0, Y0, Z0, ang_th, n_bins, inputv);
-    
+    end=omp_get_wtime();
+    printf("MAKEMARKOV: %f seconds\n",end-start);fflush(stdout);
+    //t = clock();
     printf("MARKOV COMPUTED\n");fflush(stdout);
     return LineSegmentDetection3( n_out, img, X, Y, Z,
                                ang_th, log_eps, density_th, n_bins,
                                reg_img, reg_x, reg_y, reg_z ,inputv);
+
+
+    //t=clock()-t;
+    //time_taken=((double)t)/CLOCKS_PER_SEC;
+    //printf("LSD: %f seconds\n",time_taken);fflush(stdout);
 }
 /*----------------------------------------------------------------------------*/
 /*-------------------------- Line Segment Detector ---------------------------*/
@@ -7177,7 +7506,7 @@ double * c_lsd(int * n_out,
  *
  */
  
-static PyObject * clsd(PyObject * self, PyObject * args)
+static PyObject * clsdmpi(PyObject * self, PyObject * args)
 {
 
     
@@ -7308,8 +7637,28 @@ static PyObject * clsd(PyObject * self, PyObject * args)
             make_markov3(image0, X0, Y0, Z0,  ang_th, n_bins,inputv);
             out = lsd3(&n,image,X,Y,Z,inputv);
         }
-        printf("Kernel: (p11=%.4f, p10=%.4f), (p11=%.4f, p10=%.4f), (p11=%.4f, p10=%.4f)\n \t for (a=%.1f,d=%.1f,t=%.2f)\n\n ",inputv[5],inputv[6], inputv[7],inputv[8],inputv[9],inputv[10],inputv[0],inputv[2],inputv[4]);
-    	fflush(stdout);
+        printf("Kernel: (p11=%.4f, p10=%.4f), (p11=%.4f, p10=%.4f), (p11=%.4f, p10=%.4f)\n",inputv[5],inputv[6], inputv[7],inputv[8],inputv[9],inputv[10]);
+    fflush(stdout);
+    } 
+    else if(markovOnly==2)
+    {
+        double ang_th;   /* Gradient angle tolerance in degrees.           */
+        ang_th=inputv[4];
+        int n_bins = 1024;       
+        printf("Computing Markov kernel and returning inputv\n");
+        fflush(stdout);
+        if(Z<=1) 
+        {
+            make_markov(image0, X0, Y0, ang_th, n_bins,inputv);
+            out = inputv;
+        }
+        else
+        {
+            make_markov3(image0, X0, Y0, Z0,  ang_th, n_bins,inputv);
+            out = inputv;
+        }
+        printf("Kernel: (p11=%.4f, p10=%.4f), (p11=%.4f, p10=%.4f), (p11=%.4f, p10=%.4f)\n",inputv[5],inputv[6], inputv[7],inputv[8],inputv[9],inputv[10]);
+    fflush(stdout);
     } 
     else if((X0==0) & (X>0))
     {
@@ -7324,38 +7673,62 @@ static PyObject * clsd(PyObject * self, PyObject * args)
         //printf("old: (p11=%.4f, p10=%.4f), (p11=%.4f, p10=%.4f), (p11=%.4f, p10=%.4f) \n",inputv[5],inputv[6], inputv[7],inputv[8],inputv[9],inputv[10]);
         if(Z<=1) out =  c_lsd(&n,image,X,Y,image0,X0,Y0,inputv); 
         else     out = c_lsd3(&n,image,X,Y,Z,image0,X0,Y0,Z0,inputv);
-
-        printf("Kernel: (p11=%.4f, p10=%.4f), (p11=%.4f, p10=%.4f), (p11=%.4f, p10=%.4f)\n \t for (a=%.1f,d=%.1f,t=%.2f)\n\n ",inputv[5],inputv[6], inputv[7],inputv[8],inputv[9],inputv[10],inputv[0],inputv[2],inputv[4]);
+        printf("Kernel: (p11=%.4f, p10=%.4f), (p11=%.4f, p10=%.4f), (p11=%.4f, p10=%.4f)\n",inputv[5],inputv[6], inputv[7],inputv[8],inputv[9],inputv[10]);
         fflush(stdout);
     }
     printf("\n\nCOMPLETED RUN\n\n");fflush(stdout);
-    free(image);
-    free(image0);
-    free(inputv);
     
  
     // Convert output to a valid Python structure
     // accounting for various dimensionality options
-    int mm=7;
-    if(X==0) mm=4;
-    else if(Z>1)  mm=10;
-    PyObject * pyout = PyList_New((int)n*mm);
-    if (!pyout) {
-        return NULL;
-    }   
-    for (i = 0; i< n; i++) 
+    PyObject * pyout;
+    if(markovOnly==2)
     {
-        for(j=0;j<mm;j++) 
+
+        n_points = PySequence_Fast_GET_SIZE(inputvin);
+    	pyout = PyList_New((int)n_points);
+        if (!pyout) {
+            return NULL;
+        }   
+        for (i = 0; i< (int)n_points; i++) 
         {
-            PyObject *num = PyFloat_FromDouble(out[i*mm+j]);
+            PyObject *num = PyFloat_FromDouble(out[i]);
             if (!num) {
                 Py_DECREF(pyout);
                 return NULL;
             }
-            PyList_SET_ITEM(pyout, i+j*n, num);
+            PyList_SET_ITEM(pyout, i, num);
+            
         }
     }
-    free(out);
+    else
+    { 
+        int mm=7;
+        if(X==0) mm=4;
+        else if(Z>1)  mm=10;
+        pyout = PyList_New((int)n*mm);
+        if (!pyout) {
+            return NULL;
+        }   
+        for (i = 0; i< n; i++) 
+        {
+            for(j=0;j<mm;j++) 
+            {
+                PyObject *num = PyFloat_FromDouble(out[i*mm+j]);
+                if (!num) {
+                    Py_DECREF(pyout);
+                    return NULL;
+                }
+                PyList_SET_ITEM(pyout, i+j*n, num);
+            }
+        }
+    
+    	free(out);
+    }
+   
+    free(image);
+    free(image0);
+    free(inputv);
     free(outdata);
     //free(n_points);
     //free(x);free(y);free(z);free(i);free(j);free(n);
@@ -7375,19 +7748,19 @@ static PyObject * clsd(PyObject * self, PyObject * args)
 
 //Pythonic interfaces
 static PyMethodDef clsdMethods[] = {
-    {"clsd", clsd, METH_VARARGS, "Conditional variation of the LSDSAR algorithm"},
+    {"clsdmpi", clsdmpi, METH_VARARGS, "Conditional variation of the LSDSAR algorithm"},
     {NULL, NULL, 0, NULL} /* sentinel */
 };
 
 static struct PyModuleDef moduledef = {
     PyModuleDef_HEAD_INIT,
-    "clsd",
+    "clsdmpi",
     NULL,
     -1,
     clsdMethods
 };
 
-PyMODINIT_FUNC PyInit_clsd(void)
+PyMODINIT_FUNC PyInit_clsdmpi(void)
 {
     return PyModule_Create(&moduledef);
 }

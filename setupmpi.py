@@ -13,10 +13,11 @@ import sysconfig
 
 d = os.getcwd()
 exargs = sysconfig.get_config_var('CFLAGS').split()
-exargs += ["-Wno-unused-variable","-Wno-unused-but-set-variable",
+exargs += ['-fopenmp','-O3',
+           "-Wno-unused-variable","-Wno-unused-but-set-variable",
            "-Wno-unused-function","-Wno-sign-compare",
            "-Wno-maybe-uninitialized"]
-module = Extension('clsd',
+module = Extension('clsdmpi',
                     include_dirs = [os.environ.get('TACC_GSL_INC'), 
                                     '%s/mir_install/include'%d,
                                     '%s'%d],
@@ -27,7 +28,8 @@ module = Extension('clsd',
                     runtime_library_dirs = [os.environ.get('TACC_GSL_LIB'),
                                     '%s/mir_install/lib'%d,
                                     '%s'%d],
-                    sources = ['clsd.c'],
-                    extra_compile_args = exargs)
+                    sources = ['clsdmpi.c'],
+                    extra_compile_args = exargs,
+                    extra_link_args    = ['-lgomp'])
 
-setup(name = "clsd", ext_modules = [module])
+setup(name = "clsdmpi", ext_modules = [module])
